@@ -53,7 +53,7 @@ def update_kb(qna_list):
         add=UpdateKbOperationDTOAdd(
             qna_list=qna_list,
             urls =[],
-            files=[]
+            files = []
         ),
         delete=None,
         update=None
