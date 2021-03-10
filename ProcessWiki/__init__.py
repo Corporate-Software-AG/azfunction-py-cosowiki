@@ -42,7 +42,7 @@ def create_qna_list_from_blob(myblob):
 
 def update_kb(qna_list):
     logging.info("Updating knowledge base...")
-    
+
     subscription_key = os.environ["subscription_key"]
     endpoint = os.environ["endpoint"]
     kb_id = os.environ["kb_id"]
@@ -62,6 +62,7 @@ def update_kb(qna_list):
     update_op = client.knowledgebase.update(kb_id=kb_id, update_kb=update_kb_operation_dto)
     _monitor_operation(client=client, operation=update_op)
     logging.info("Updated knowledge base.")
+    publish_kb(client=client, kb_id=kb_id)
 
 def create_kb_faq_dto(answer, questions):
     return QnADTO(
@@ -85,3 +86,8 @@ def _monitor_operation(client, operation):
         raise Exception("Operation {} failed to complete.".format(operation.operation_id))
 
     return operation
+
+def publish_kb(client, kb_id):
+    print("Publishing knowledge base...")
+    client.knowledgebase.publish(kb_id=kb_id)
+    print("Published knowledge base.")
