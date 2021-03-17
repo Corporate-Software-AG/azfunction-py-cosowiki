@@ -1,15 +1,11 @@
 import logging
 import azure.functions as func
 import urllib.request
-from bs4 import BeautifulSoup
-
 import os
 import time
 
-from azure.cognitiveservices.knowledge.qnamaker import QnAMakerClient
-from azure.cognitiveservices.knowledge.qnamaker.models import QnADTO, MetadataDTO, CreateKbDTO, OperationStateType, UpdateKbOperationDTO, UpdateKbOperationDTOAdd, EndpointKeysDTO, QnADTOContext, PromptDTO, QueryDTO
-
-from msrest.authentication import CognitiveServicesCredentials
+from bs4 import BeautifulSoup
+from azure.storage.blob import BlobServiceClient, BlobClient, ContainerClient
 
 def main(myblob: func.InputStream):
     logging.info(f"Python blob trigger function processed blob \n"
@@ -17,12 +13,14 @@ def main(myblob: func.InputStream):
                  f"URI: {myblob.uri}\n"
                  f"Blob Size: {myblob.length} bytes")
     
-    qna_list = create_qna_list_from_blob(myblob)
-    update_kb(qna_list)
+    qna_list = create_qna_list_from_blob(myblob=myblob)
+    write_txt(blob_id=''.join(e for e in myblob.name if e.isalnum()), qna_list=qna_list)
 
     logging.info("FINISHED")
 
+
 def create_qna_list_from_blob(myblob):
+    logging.info("Create QnA List from Blob")
     with urllib.request.urlopen(myblob.uri) as f:
         html = f.read().decode('utf-8')
         soup = BeautifulSoup(html, "html.parser")
@@ -34,60 +32,29 @@ def create_qna_list_from_blob(myblob):
             answer=soup.find(id=section_id).decode_contents()
             if (len(answer) <= 1):
                 answer = "No Content"
-            qna_list.append(create_kb_faq_dto(answer, [title.string]))
+            qna_list.append({"answer":answer, "title":title.string})
         
     return qna_list
 
+def write_txt(blob_id, qna_list):
+    logging.info("Write QnA List into TXT")
+    local_file_name = str(blob_id) + ".txt"
+    with open(local_file_name, "w") as file:
+        for num, qna in enumerate(qna_list, start=1):
+            file.write("{}. {}\n".format(str(num), qna['title']))
+            file.write("{}\n\n".format(qna['answer']))
+        file.close()
+    upload_txt(local_file_name, "faqtxt")
 
-
-def update_kb(qna_list):
-    logging.info("Updating knowledge base...")
-
-    subscription_key = os.environ["subscription_key"]
-    endpoint = os.environ["endpoint"]
-    kb_id = os.environ["kb_id"]
-
-    client = QnAMakerClient(endpoint=endpoint, credentials=CognitiveServicesCredentials(subscription_key))
+def upload_txt(local_file_name, container_name):
+    logging.info("Upload TXT into Blob Container {}".format(container_name))
+    # Create a blob client using the local file name as the name for the blob
     
-    update_kb_operation_dto = UpdateKbOperationDTO(
-        add=UpdateKbOperationDTOAdd(
-            qna_list=qna_list,
-            urls =[],
-            files = []
-        ),
-        delete=None,
-        update=None
-    )
+    blob_service_client = BlobServiceClient.from_connection_string(os.environ["AzureWebJobsStorage"])
+    blob_client = blob_service_client.get_blob_client(container=container_name, blob=local_file_name)
 
-    update_op = client.knowledgebase.update(kb_id=kb_id, update_kb=update_kb_operation_dto)
-    _monitor_operation(client=client, operation=update_op)
-    logging.info("Updated knowledge base.")
-    publish_kb(client=client, kb_id=kb_id)
+    print("\nUploading to Azure Storage as blob:\n\t" + local_file_name)
 
-def create_kb_faq_dto(answer, questions):
-    return QnADTO(
-        answer=answer,
-        questions=questions,
-        metadata=[
-            MetadataDTO(name="Category", value="FAQ"),
-            MetadataDTO(name="FAQ", value=questions[0]),
-        ]
-    )
-
-def _monitor_operation(client, operation):
-    for i in range(20):
-        if operation.operation_state in [OperationStateType.not_started, OperationStateType.running]:
-            logging.info("Waiting for operation: {} to complete.".format(operation.operation_id))
-            time.sleep(5)
-            operation = client.operations.get_details(operation_id=operation.operation_id)
-        else:
-            break
-    if operation.operation_state != OperationStateType.succeeded:
-        raise Exception("Operation {} failed to complete.".format(operation.operation_id))
-
-    return operation
-
-def publish_kb(client, kb_id):
-    print("Publishing knowledge base...")
-    client.knowledgebase.publish(kb_id=kb_id)
-    print("Published knowledge base.")
+    # Upload the created file
+    with open(local_file_name, "rb") as data:
+        blob_client.upload_blob(data)

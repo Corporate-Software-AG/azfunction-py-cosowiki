@@ -5,3 +5,4 @@
 azure-functions
 beautifulsoup4
 azure-cognitiveservices-knowledge-qnamaker
+azure-storage-blob
